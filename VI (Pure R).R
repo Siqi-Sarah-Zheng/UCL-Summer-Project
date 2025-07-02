@@ -2,6 +2,8 @@ library(torch)
 library(deSolve)
 library(survival)
 
+source("routines.R")
+
 ###############################################################################
 # Data preparation                                                            
 ###############################################################################
@@ -16,126 +18,126 @@ df <- df[order(df$time),]
 t_obs <- df$time                   
 delta <- as.numeric(df$status)    
 n     <- length(t_obs)
-
-###############################################################################
-# Hazard–Response ODE                                           
-###############################################################################
-
-# Hazard-Response ODE, from 'routines.R'
-hazmodHRL <- function(t, y, par) {
-  # state variables
-  lh <- y[1]
-  lq <- y[2]
-  CH <- y[3]
-  
-  # parameters
-  lambda <- par[1]
-  kappa <- par[2]
-  alpha <- par[3]
-  beta <- par[4]
-  
-  # model equations
-  dlh <-  lambda*(1 - exp(lh)/kappa) - alpha*exp(lq)
-  dlq <-  beta*(1-exp(lq)/kappa) - alpha*exp(lh)
-  dCH <- exp(lh)
-  
-  # result
-  return( list(c(dlh, dlq, dCH)) )
-}
-
-
-# Jacobian of the system of ODEs, from 'routines.R'
-
-jacODE <- function(t, y, par) {
-  # state variables
-  h <- y[1]
-  q <- y[2]
-  CH <- y[3]
-  
-  # parameters
-  lambda <- par[1]
-  kappa <- par[2]
-  alpha <- par[3]
-  beta <- par[4]
-  
-  J1 <- c(lambda*(1-2*h/kappa) - alpha*q, -alpha*h, 0)
-  J2 <- c(-alpha*q, beta*(1-2*q/kappa) - alpha*h, 0)
-  J3 <- c(1, 0, 0)
-  
-  jacob <- as.matrix(rbind(J1, J2, J3))
-  return(jacob)
-}
-
-jacODEL <- function(t, y, par) {
-  # state variables
-  lh <- y[1]
-  lq <- y[2]
-  CH <- y[3]
-  
-  # parameters
-  lambda <- par[1]
-  kappa <- par[2]
-  alpha <- par[3]
-  beta <- par[4]
-  
-  J1 <- c( - lambda*exp(lh)/kappa, - alpha*exp(lq), 0)
-  J2 <- c(- alpha*exp(lh),- beta*exp(lq)/kappa, 0)
-  J3 <- c(exp(lh), 0, 0)
-  
-  jacob <- as.matrix(rbind(J1, J2, J3))
-  return(jacob)
-}
-
-
-# Solve the Hazard-Response ODE system
-solve_HR <- function(theta, times, h0 = 0.1, q0 = 0.1) {
-  # Initial conditions in log scale
-  init <- c(
-    lh = log(h0),  # Initial log hazard
-    lq = log(q0),  # Initial log treatment response
-    CH = 0  # Cumulative hazard starts at 0
-  )
-  
-  # Solve ODE using LSODE method
-  out  <- ode(
-    y       = init,  # Initial state
-    times   = sort(unique(times)),  # Time points (include 0 for stability)
-    func    = hazmodHRL,
-    parms   = theta,  
-    jacfunc = jacODEL,
-    jactype = "fullusr",  
-    method  = "lsode",
-    rtol    = 1e-6,
-    atol    = 1e-6,
-    maxsteps= 5e4  # Maximum solver steps
-  )
-  
-  # Remove initial time point (0) if present
-  if (out[1,"time"] == 0) out <- out[-1, ]
-  
-  # Extract hazard and cumulative hazard
-  h <- pmax(exp(out[,"lh"]), 1e-8) 
-  H <- out[,"CH"]
-  
-  list(
-    h = approx(out[,"time"], h, xout = times)$y,  # Hazard at observation times
-    H = approx(out[,"time"], H, xout = times)$y  # Cumulative hazard at observation times
-  )
-}
-
-
-# Log-likelihood function
-loglik_theta <- function(theta) {
-  # Solve ODE system for current parameters
-  sol <- solve_HR(theta, t_obs)
-  
-  if (any(!is.finite(sol$h)) || any(!is.finite(sol$H))) {
-    return(-1e6)  # Return large negative value for invalid solutions
-  }
-  
-  # Calculate log-likelihood:
-  sum(delta * log(sol$h) - sol$H)
-}
+# 
+# ###############################################################################
+# # Hazard–Response ODE                                           
+# ###############################################################################
+# 
+# # Hazard-Response ODE, from 'routines.R'
+# hazmodHRL <- function(t, y, par) {
+#   # state variables
+#   lh <- y[1]
+#   lq <- y[2]
+#   CH <- y[3]
+#   
+#   # parameters
+#   lambda <- par[1]
+#   kappa <- par[2]
+#   alpha <- par[3]
+#   beta <- par[4]
+#   
+#   # model equations
+#   dlh <-  lambda*(1 - exp(lh)/kappa) - alpha*exp(lq)
+#   dlq <-  beta*(1-exp(lq)/kappa) - alpha*exp(lh)
+#   dCH <- exp(lh)
+#   
+#   # result
+#   return( list(c(dlh, dlq, dCH)) )
+# }
+# 
+# 
+# # Jacobian of the system of ODEs, from 'routines.R'
+# 
+# jacODE <- function(t, y, par) {
+#   # state variables
+#   h <- y[1]
+#   q <- y[2]
+#   CH <- y[3]
+#   
+#   # parameters
+#   lambda <- par[1]
+#   kappa <- par[2]
+#   alpha <- par[3]
+#   beta <- par[4]
+#   
+#   J1 <- c(lambda*(1-2*h/kappa) - alpha*q, -alpha*h, 0)
+#   J2 <- c(-alpha*q, beta*(1-2*q/kappa) - alpha*h, 0)
+#   J3 <- c(1, 0, 0)
+#   
+#   jacob <- as.matrix(rbind(J1, J2, J3))
+#   return(jacob)
+# }
+# 
+# jacODEL <- function(t, y, par) {
+#   # state variables
+#   lh <- y[1]
+#   lq <- y[2]
+#   CH <- y[3]
+#   
+#   # parameters
+#   lambda <- par[1]
+#   kappa <- par[2]
+#   alpha <- par[3]
+#   beta <- par[4]
+#   
+#   J1 <- c( - lambda*exp(lh)/kappa, - alpha*exp(lq), 0)
+#   J2 <- c(- alpha*exp(lh),- beta*exp(lq)/kappa, 0)
+#   J3 <- c(exp(lh), 0, 0)
+#   
+#   jacob <- as.matrix(rbind(J1, J2, J3))
+#   return(jacob)
+# }
+# 
+# 
+# # Solve the Hazard-Response ODE system
+# solve_HR <- function(theta, times, h0 = 0.1, q0 = 0.1) {
+#   # Initial conditions in log scale
+#   init <- c(
+#     lh = log(h0),  # Initial log hazard
+#     lq = log(q0),  # Initial log treatment response
+#     CH = 0  # Cumulative hazard starts at 0
+#   )
+#   
+#   # Solve ODE using LSODE method
+#   out  <- ode(
+#     y       = init,  # Initial state
+#     times   = sort(unique(times)),  # Time points (include 0 for stability)
+#     func    = hazmodHRL,
+#     parms   = theta,  
+#     jacfunc = jacODEL,
+#     jactype = "fullusr",  
+#     method  = "lsode",
+#     rtol    = 1e-6,
+#     atol    = 1e-6,
+#     maxsteps= 5e4  # Maximum solver steps
+#   )
+#   
+#   # Remove initial time point (0) if present
+#   if (out[1,"time"] == 0) out <- out[-1, ]
+#   
+#   # Extract hazard and cumulative hazard
+#   h <- pmax(exp(out[,"lh"]), 1e-8) 
+#   H <- out[,"CH"]
+#   
+#   list(
+#     h = approx(out[,"time"], h, xout = times)$y,  # Hazard at observation times
+#     H = approx(out[,"time"], H, xout = times)$y  # Cumulative hazard at observation times
+#   )
+# }
+# 
+# 
+# # Log-likelihood function
+# loglik_theta <- function(theta) {
+#   # Solve ODE system for current parameters
+#   sol <- solve_HR(theta, t_obs)
+#   
+#   if (any(!is.finite(sol$h)) || any(!is.finite(sol$H))) {
+#     return(-1e6)  # Return large negative value for invalid solutions
+#   }
+#   
+#   # Calculate log-likelihood:
+#   sum(delta * log(sol$h) - sol$H)
+# }
 
 ###############################################################################
 # Monte-Carlo ELBO                                   
