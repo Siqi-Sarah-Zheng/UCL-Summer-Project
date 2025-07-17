@@ -41,7 +41,7 @@ mc_elbo <- function(phi, N = 1000){
   
   # Sample from the variational distribution
   
-  eps = matrix(rnorm(N*4), ncol = 4)
+  # eps = matrix(rnorm(N*4), ncol = 4)
   
   eta = cbind(rtp3(N, mu[1], sigma1[1], sigma2[1], FUN = rnorm),
               rtp3(N, mu[2], sigma1[2], sigma2[2], FUN = rnorm),
@@ -49,15 +49,16 @@ mc_elbo <- function(phi, N = 1000){
               rtp3(N, mu[4], sigma1[4], sigma2[4], FUN = rnorm))
   
   # Calculate the ELBO
-  # Term 1: E_q[ log p(y, θ) + log|J| ]
+  
+  # Term 1: E[log p(y,θ)]
   
   log_p = numeric(N) # create an empty vector to store log p(y, θ)
   
   for (i in 1:N) {
-    log_p[i] = -log_postHR(eta[i,])
+    log_p[i] = -log_postHRL(eta[i,])
   }
   
-  # Term 2: E_q[ log q(η) ]
+  # Term 2: E[log q(η)]
   
   log_q_matrix = matrix(NA, nrow = N, ncol = 4)
   for (i in 1:4) {
@@ -74,14 +75,15 @@ mc_elbo <- function(phi, N = 1000){
 #################################################################################
 # Optimisation
 #################################################################################
+# phi_init = rep(0,12)
+phi_init = c(as.numeric(inits), rep(0,8))
 
-phi_init = rep(0,12)
-
-set.seed(123)
+set.seed(42) # 42
 
 phi = nlminb(phi_init, mc_elbo, control = list(iter.max = 1e4, trace = 1))$par
 
 print(phi)
+
 
 #################################################################################
 # Results
