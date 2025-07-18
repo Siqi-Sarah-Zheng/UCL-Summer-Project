@@ -102,3 +102,57 @@ theta_samples <- as.data.frame(exp(eta_samples))
 colnames(theta_samples) <- c("lambda", "kappa", "alpha", "beta")
 
 summary(theta_samples)
+
+
+
+
+
+#################################################################################
+# LSE
+#################################################################################
+
+LSE <- function(phi){
+  
+  mu = phi[1:4]
+  sigma1 = exp(phi[5:8])
+  sigma2 = exp(phi[9:12])
+  
+  par1_grid <- seq(from = 1, to = 5,  length.out = 10)
+  par2_grid <- seq(from = 1, to = 5,  length.out = 10)
+  par3_grid <- seq(from = 1, to = 5,  length.out = 10)
+  par4_grid <- seq(from = 1, to = 5,  length.out = 10)
+  
+  
+  # Create all combinations
+  param_combinations <- expand.grid(par1 = par1_grid,
+                                    par2 = par2_grid,
+                                    par3 = par3_grid,
+                                    par4 = par4_grid)
+  
+  # Convert to matrix if needed
+  eta  <- as.matrix(param_combinations)
+  
+  # Calculate the ELBO
+  
+  # Term 1: E[log p(y,θ)]
+  
+  log_p = numeric(N) # create an empty vector to store log p(y, θ)
+  
+  for (i in 1:N) {
+    log_p[i] = -log_postHRL(eta[i,])
+  }
+  
+  # Term 2: E[log q(η)]
+  
+  log_q_matrix = matrix(NA, nrow = N, ncol = 4)
+  for (i in 1:4) {
+    log_q_matrix[,i] = dtp3(eta[,i], mu[i], sigma1[i], sigma2[i], FUN = dnorm, log = TRUE )
+  }
+  
+  log_q = rowSums(log_q_matrix)
+  
+  mse = mean( (log_p - log_q)^2)
+  
+  return(mse)
+}
+
