@@ -12,6 +12,8 @@ hess = hessian(func = log_postHR, x = MAP)
 
 Sigma = solve(hess)
 
+sigmas_napp = sqrt(diag(Sigma))
+
 library(mvtnorm)
 
 set.seed(123)
@@ -44,6 +46,7 @@ legend("topright", c("Normal","MCMC"), col=c("blue","red"), lwd=2)
 plot(density(exp(post_napp[,4])), main = expression(beta ~ ": MCMC vs Normal Approximation"),
      lwd = 2, col = "blue", xlab = expression(beta), ylab = "Density", xlim = c(1,10))
 lines(density(betapHR), lwd = 2, col = "red")
+lines(density(theta_samples$beta), lwd = 2, col = "darkgreen")
 legend("topright", c("Normal","MCMC"), col=c("blue","red"), lwd=2)  
 
 

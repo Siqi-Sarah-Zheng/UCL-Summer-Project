@@ -76,11 +76,15 @@ mc_elbo <- function(phi, N = 1000){
 # Optimisation
 #################################################################################
 # phi_init = rep(0,12)
-phi_init = c(as.numeric(inits), rep(0,8))
+# phi_init = c(as.numeric(inits), rep(0,8)) # mean and variance from normal approx. sigma1=sigma2=sigma from normal
+sigmas_napp = sqrt(diag(Sigma))
+phi_init <- c(MAP, log(sigmas_napp), log(sigmas_napp))
 
-set.seed(42) # 42
+set.seed(42)
 
-phi = nlminb(phi_init, mc_elbo, control = list(iter.max = 1e4, trace = 1))$par
+output = nlminb(phi_init, mc_elbo, control = list(iter.max = 1e4, trace = 1)) # use N=100000
+
+phi = output$par
 
 print(phi)
 
@@ -104,55 +108,40 @@ colnames(theta_samples) <- c("lambda", "kappa", "alpha", "beta")
 summary(theta_samples)
 
 
-
-
-
 #################################################################################
-# LSE
+# Plots for Comparisons
 #################################################################################
 
-LSE <- function(phi){
-  
-  mu = phi[1:4]
-  sigma1 = exp(phi[5:8])
-  sigma2 = exp(phi[9:12])
-  
-  par1_grid <- seq(from = 1, to = 5,  length.out = 10)
-  par2_grid <- seq(from = 1, to = 5,  length.out = 10)
-  par3_grid <- seq(from = 1, to = 5,  length.out = 10)
-  par4_grid <- seq(from = 1, to = 5,  length.out = 10)
-  
-  
-  # Create all combinations
-  param_combinations <- expand.grid(par1 = par1_grid,
-                                    par2 = par2_grid,
-                                    par3 = par3_grid,
-                                    par4 = par4_grid)
-  
-  # Convert to matrix if needed
-  eta  <- as.matrix(param_combinations)
-  
-  # Calculate the ELBO
-  
-  # Term 1: E[log p(y,θ)]
-  
-  log_p = numeric(N) # create an empty vector to store log p(y, θ)
-  
-  for (i in 1:N) {
-    log_p[i] = -log_postHRL(eta[i,])
-  }
-  
-  # Term 2: E[log q(η)]
-  
-  log_q_matrix = matrix(NA, nrow = N, ncol = 4)
-  for (i in 1:4) {
-    log_q_matrix[,i] = dtp3(eta[,i], mu[i], sigma1[i], sigma2[i], FUN = dnorm, log = TRUE )
-  }
-  
-  log_q = rowSums(log_q_matrix)
-  
-  mse = mean( (log_p - log_q)^2)
-  
-  return(mse)
-}
+
+# Plot for lambda
+plot(density(exp(post_napp[,1])), main= expression(lambda ~ ": Comparisons between Normal, MCMC, VB"),
+     lwd = 2, col = "blue", xlab=expression(lambda), ylab = "Density")
+lines(density(lambdapHR), lwd = 2, col = "red")
+lines(density(theta_samples$lambda), lwd = 2, col = "purple")
+legend("topright", c("Normal","MCMC", "Variational Bayes"), col=c("blue","red", "purple"), lwd=2)
+
+
+# kappa
+plot(density(exp(post_napp[,2])), main = expression(kappa ~ ": Comparisons between Normal, MCMC, VB"),
+     lwd = 2, col = "blue", xlab = expression(kappa), ylab = "Density")
+lines(density(kappapHR), lwd = 2, col = "red")
+lines(density(theta_samples$kappa), lwd = 2, col = "purple")
+legend("topright", c("Normal","MCMC", "Variational Bayes"), col=c("blue","red", "purple"), lwd=2)
+
+
+# alpha
+plot(density(exp(post_napp[,3])), main = expression(alpha ~ ": Comparisons between Normal, MCMC, VB"),
+     lwd = 2, col = "blue", xlab = expression(alpha), ylab = "Density", xlim = c(0,11))
+lines(density(alphapHR), lwd = 2, col = "red")
+lines(density(theta_samples$alpha), lwd = 2, col = "purple")
+legend("topright", c("Normal","MCMC", "VB"), col=c("blue","red", "purple"), lwd=2) 
+
+
+# beta
+plot(density(exp(post_napp[,4])), main = expression(beta ~ ": Comparisons between Normal, MCMC, VB"),
+     lwd = 2, col = "blue", xlab = expression(beta), ylab = "Density", xlim = c(1,10))
+lines(density(betapHR), lwd = 2, col = "red")
+lines(density(theta_samples$beta), lwd = 2, col = "purple")
+legend("topright", c("Normal","MCMC", "VB"), col=c("blue","red", "purple"), lwd=2) 
+
 
