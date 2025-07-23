@@ -61,16 +61,23 @@ param_combinations <- expand.grid(par1 = par1_grid,
 eta_grid  <- as.matrix(param_combinations)
 
 
-N <- nrow(eta_grid)
-log_p <- numeric(N)
-for (i in 1:N) {
-  log_p[i] <- -log_postHRL(eta_grid[i,])
+#N <- nrow(eta_grid)
+#log_p <- numeric(N)
+#for (i in 1:N) {
+#  log_p[i] <- -log_postHRL(eta_grid[i,])
+#}
+
+log_p <- numeric(nrow(sim))
+for (i in 1:nrow(sim)) {
+  log_p[i] <- -log_postHRL(sim[i,])
 }
 
 
 #################################################################################
 # LSE function
 #################################################################################
+
+sim = chainHR[ind,]
 
 LSE <- function(phi, eta, log_p){
   
@@ -84,10 +91,21 @@ LSE <- function(phi, eta, log_p){
   
   # Calculate log_q using the pre-calculated grid.
   
-  log_q_matrix <- matrix(NA, nrow = nrow(eta), ncol = 4)
-  for (i in 1:4) {
-    log_q_matrix[,i] <- dtp3(eta[,i], mu[i], sigma1[i], sigma2[i], FUN = dnorm, log = TRUE )
+  ##############################
+  log_q_matrix <- matrix(NA, nrow = nrow(sim), ncol = 4)
+  
+  # for(j in 1:nrow(sim)){
+  # for (i in 1:4) {
+  #   log_q_matrix[j,i] <- dtp3(sim[j,i], mu[i], sigma1[i], sigma2[i], FUN = dnorm, log = TRUE )
+  # }
+  # }
+  
+  for (j in 1:nrow(sim)) {
+    for (i in 1:4) {
+      log_q_matrix[j,i] <- dtp3(eta[j,i], mu[i], sigma1[i], sigma2[i], FUN = dnorm, log = TRUE )
+    }
   }
+  
   
   if (any(!is.finite(log_q_matrix))) {
     return(.Machine$double.xmax)
@@ -109,15 +127,18 @@ LSE <- function(phi, eta, log_p){
 # phi_init <- c(as.numeric(inits), rep(0,8))
 
 # We define the initial phi using the means and sd from the normal approximation, we set sigma 1 = sigma 2
-sigmas_napp = sqrt(diag(Sigma))
-phi_init_lse <- c(MAP, log(sigmas_napp), log(sigmas_from_napp))
+# sigmas_napp = sqrt(diag(Sigma))
+# phi_init_lse <- c(MAP, log(sigmas_napp), log(sigmas_napp))
+# phi_init_lse <- c(MAP, log(c(sigmas_napp[1], sigmas_napp[2], 1.5 * sigmas_napp[3], 1.1 * sigmas_napp[4])), log(c(1.5 * sigmas_napp[1], 3* sigmas_napp[2], sigmas_napp[3], sigmas_napp[4])))
+
+phi_init_lse <- OPT$par
 
 set.seed(1234)
 
 output_lse <- nlminb(phi_init, LSE, 
-                 eta = eta_grid, 
-                 log_p = log_p,
-                 control = list(iter.max = 1e4, trace = 1))
+                     eta = eta_grid, 
+                     log_p = log_p,
+                     control = list(iter.max = 1e4, trace = 1))
 
 phi_lse <- output$par
 
@@ -130,9 +151,9 @@ sigma1_lse = exp(phi[5:8])
 sigma2_lse = exp(phi[9:12])
 
 eta_samples_lse = cbind(rtp3(10000, mu_lse[1], sigma1_lse[1], sigma2_lse[1], FUN = rnorm),
-                    rtp3(10000, mu_lse[2], sigma1_lse[2], sigma2_lse[2], FUN = rnorm),
-                    rtp3(10000, mu_lse[3], sigma1_lse[3], sigma2_lse[3], FUN = rnorm),
-                    rtp3(10000, mu_lse[4], sigma1_lse[4], sigma2_lse[4], FUN = rnorm))
+                        rtp3(10000, mu_lse[2], sigma1_lse[2], sigma2_lse[2], FUN = rnorm),
+                        rtp3(10000, mu_lse[3], sigma1_lse[3], sigma2_lse[3], FUN = rnorm),
+                        rtp3(10000, mu_lse[4], sigma1_lse[4], sigma2_lse[4], FUN = rnorm))
 
 theta_samples_lse <- as.data.frame(exp(eta_samples_lse))
 colnames(theta_samples_lse) <- c("lambda", "kappa", "alpha", "beta")
@@ -148,7 +169,7 @@ summary(theta_samples_lse)
 
 # Plot for lambda
 plot(density(theta_samples_lse$lambda), main= expression(lambda ~ ": Normal, MCMC, VB , LSE"),
-     lwd = 2, col = "darkgreen", xlab=expression(lambda), ylab = "Density", xlim = c(1,3))
+     lwd = 2, col = "darkgreen", xlab=expression(lambda), ylab = "Density", xlim = c(1,3), ylim = c(0,2.5))
 
 lines(density(lambdapHR), lwd = 2, col = "red")
 lines(density(theta_samples$lambda), lwd = 2, col = "purple")
@@ -158,7 +179,7 @@ legend("topright", c("Normal","MCMC", "VB", "LSE"), col=c("blue","red", "purple"
 
 # kappa
 plot(density(exp(post_napp[,2])), main = expression(kappa ~ ": Normal, MCMC, VB , LSE"),
-     lwd = 2, col = "blue", xlab = expression(kappa), ylab = "Density")
+     lwd = 2, col = "blue", xlab = expression(kappa), ylab = "Density", ylim = c(0,35))
 lines(density(kappapHR), lwd = 2, col = "red")
 lines(density(theta_samples$kappa), lwd = 2, col = "purple")
 lines(density(theta_samples_lse$kappa), lwd = 2, col = "darkgreen")
@@ -179,5 +200,4 @@ lines(density(betapHR), lwd = 2, col = "red")
 lines(density(theta_samples$beta), lwd = 2, col = "purple")
 lines(density(theta_samples_lse$beta), lwd = 2, col = "darkgreen")
 legend("topright", c("Normal","MCMC", "VB", "LSE"), col=c("blue","red", "purple", "darkgreen"), lwd=2)
-
 

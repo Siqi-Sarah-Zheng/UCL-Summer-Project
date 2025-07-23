@@ -33,7 +33,7 @@ survtimes <- df$time
 # Monte Carlo function of the ELBO
 #################################################################################
 
-mc_elbo <- function(phi, N = 1000){
+mc_elbo <- function(phi, N = 5000){
   
   mu = phi[1:4]
   sigma1 = exp(phi[5:8])
@@ -52,18 +52,29 @@ mc_elbo <- function(phi, N = 1000){
   
   # Term 1: E[log p(y,θ)]
   
-  log_p = numeric(N) # create an empty vector to store log p(y, θ)
+  #log_p = numeric(N) # create an empty vector to store log p(y, θ)
+  #for (i in 1:N) {
+  #  log_p[i] = -log_postHRL(eta[i,])
+  #}
   
-  for (i in 1:N) {
-    log_p[i] = -log_postHRL(eta[i,])
-  }
+  
   
   # Term 2: E[log q(η)]
   
-  log_q_matrix = matrix(NA, nrow = N, ncol = 4)
-  for (i in 1:4) {
-    log_q_matrix[,i] = dtp3(eta[,i], mu[i], sigma1[i], sigma2[i], FUN = dnorm, log = TRUE )
+  # log_q_matrix = matrix(NA, nrow = N, ncol = 4)
+  
+  log_q_matrix = matrix(NA, nrow = nrow(sim), ncol = 4)
+  
+  #for (i in 1:4) {
+  #  log_q_matrix[,i] = dtp3(eta[,i], mu[i], sigma1[i], sigma2[i], FUN = dnorm, log = TRUE )
+  #}
+  
+  for (j in 1:nrow(sim)) {
+    for (i in 1:4) {
+      log_q_matrix[j,i] <- dtp3(eta[j,i], mu[i], sigma1[i], sigma2[i], FUN = dnorm, log = TRUE )
+    }
   }
+  
   log_q = rowSums(log_q_matrix)
   
   elbo = mean(log_p - log_q)
@@ -77,8 +88,16 @@ mc_elbo <- function(phi, N = 1000){
 #################################################################################
 # phi_init = rep(0,12)
 # phi_init = c(as.numeric(inits), rep(0,8)) # mean and variance from normal approx. sigma1=sigma2=sigma from normal
+
 sigmas_napp = sqrt(diag(Sigma))
 phi_init <- c(MAP, log(sigmas_napp), log(sigmas_napp))
+
+
+phi_init <- c(MAP, 
+              log(c(sigmas_napp[1], 0.6 * sigmas_napp[2],
+                    1.5 * sigmas_napp[3], 1.2 * sigmas_napp[4])), 
+              log(c(1.5 * sigmas_napp[1], sigmas_napp[2], sigmas_napp[3], sigmas_napp[4])))
+
 
 set.seed(42)
 
@@ -123,7 +142,7 @@ legend("topright", c("Normal","MCMC", "Variational Bayes"), col=c("blue","red", 
 
 # kappa
 plot(density(exp(post_napp[,2])), main = expression(kappa ~ ": Comparisons between Normal, MCMC, VB"),
-     lwd = 2, col = "blue", xlab = expression(kappa), ylab = "Density")
+     lwd = 2, col = "blue", xlab = expression(kappa), ylab = "Density", ylim = c(0,35))
 lines(density(kappapHR), lwd = 2, col = "red")
 lines(density(theta_samples$kappa), lwd = 2, col = "purple")
 legend("topright", c("Normal","MCMC", "Variational Bayes"), col=c("blue","red", "purple"), lwd=2)
