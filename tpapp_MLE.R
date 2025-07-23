@@ -10,11 +10,20 @@ nloglik <- function(par){
   # Calculate log_q using the pre-calculated grid.
   
   log_q_matrix <- matrix(NA, nrow = nrow(sim), ncol = ncol(sim))
-  for(j in 1:nrow(sim)){
-  for (i in 1:4) {
-    log_q_matrix[j,i] <- dtp3(sim[j,i], mu[i], sigma1[i], sigma2[i], FUN = dnorm, log = TRUE )
-  }
-  }
+  
+  log_q_matrix <- matrix(
+    mapply(function(x, i) dtp3(x, mu[i], sigma1[i], sigma2[i], FUN = dnorm, log = TRUE),
+           x = as.vector(sim),
+           i = rep(1:4, each = nrow(sim))),
+    nrow = nrow(sim), ncol = 4, byrow = FALSE
+  )
+  
+  
+  # for(j in 1:nrow(sim)){
+  # for (i in 1:4) {
+  #   log_q_matrix[j,i] <- dtp3(sim[j,i], mu[i], sigma1[i], sigma2[i], FUN = dnorm, log = TRUE )
+  # }
+  # }
   
   out <- -sum(log_q_matrix)
   
