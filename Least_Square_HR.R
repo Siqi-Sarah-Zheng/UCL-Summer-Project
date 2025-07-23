@@ -49,10 +49,20 @@ survtimes <- df$time
 #par3_grid <- seq(from = MAP[3] - 3*sigmas_from_norm_approx[3], to = MAP[3] + 3*sigmas_from_norm_approx[3], length.out = 10)
 #par4_grid <- seq(from = MAP[4] - 3*sigmas_from_norm_approx[4], to = MAP[4] + 3*sigmas_from_norm_approx[4], length.out = 10)
 
-par1_grid <- seq(from = 0.2, to = 0.8,  length.out = 10)
-par2_grid <- seq(from = -3, to = 3,  length.out = 10)
-par3_grid <- seq(from = 1.5, to = 2.5,  length.out = 10)
+par1_grid <- seq(from = 0.2, to = 1,  length.out = 10)
+par2_grid <- seq(from = -3, to = -1,  length.out = 10)
+par3_grid <- seq(from = 1.0, to = 2.5,  length.out = 10)
 par4_grid <- seq(from = 1, to = 2,  length.out = 10)
+
+
+#par1_grid <- seq(from = MAP[1] - 3*Sigma[1,1], to = MAP[1] + 3*Sigma[1,1],  length.out = 100)
+#par2_grid <- seq(from = MAP[2] - 3*Sigma[2,2], to = MAP[2] + 3*Sigma[2,2],  length.out = 100)
+#par3_grid <- seq(from = MAP[3] - 3*Sigma[3,3], to = MAP[3] + 3*Sigma[3,3],  length.out = 100)
+#par4_grid <- seq(from = MAP[4] - 3*Sigma[4,4], to = MAP[4] + 3*Sigma[4,4],  length.out = 100)
+
+
+
+
 
 param_combinations <- expand.grid(par1 = par1_grid,
                                   par2 = par2_grid,
@@ -92,7 +102,7 @@ LSE <- function(phi, eta, log_p){
   # Calculate log_q using the pre-calculated grid.
   
   ##############################
-  log_q_matrix <- matrix(NA, nrow = nrow(sim), ncol = 4)
+  log_q_matrix <- matrix(NA, nrow = nrow(eta), ncol = 4)
   
   # for(j in 1:nrow(sim)){
   # for (i in 1:4) {
@@ -100,7 +110,7 @@ LSE <- function(phi, eta, log_p){
   # }
   # }
   
-  for (j in 1:nrow(sim)) {
+  for (j in 1:nrow(eta)) {
     for (i in 1:4) {
       log_q_matrix[j,i] <- dtp3(eta[j,i], mu[i], sigma1[i], sigma2[i], FUN = dnorm, log = TRUE )
     }
@@ -114,7 +124,9 @@ LSE <- function(phi, eta, log_p){
   log_q <- rowSums(log_q_matrix)
   
   # Calculate MSE against the pre-calculated log_p vector.
-  mse <- mean( (log_p - log_q)^2)
+#  mse <- mean( (log_p - log_q)^2)
+  
+  mse <- mean( (log_p - lnormc - log_q)^2) 
   
   return(mse)
 }
@@ -135,20 +147,20 @@ phi_init_lse <- OPT$par
 
 set.seed(1234)
 
-output_lse <- nlminb(phi_init, LSE, 
+output_lse <- nlminb(phi_init_lse, LSE, 
                      eta = eta_grid, 
                      log_p = log_p,
                      control = list(iter.max = 1e4, trace = 1))
 
-phi_lse <- output$par
+phi_lse <- output_lse$par
 
 #################################################################################
 # Result
 #################################################################################
 
-mu_lse = phi[1:4]
-sigma1_lse = exp(phi[5:8])
-sigma2_lse = exp(phi[9:12])
+mu_lse = phi_lse[1:4]
+sigma1_lse = exp(phi_lse[5:8])
+sigma2_lse = exp(phi_lse[9:12])
 
 eta_samples_lse = cbind(rtp3(10000, mu_lse[1], sigma1_lse[1], sigma2_lse[1], FUN = rnorm),
                         rtp3(10000, mu_lse[2], sigma1_lse[2], sigma2_lse[2], FUN = rnorm),
