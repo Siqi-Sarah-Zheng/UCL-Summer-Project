@@ -34,21 +34,21 @@ tempf4 <- Vectorize(function(x) dtp3(x, OPT$par[4], exp(OPT$par[8]), exp(OPT$par
 
 plot(density(sim[,1]), main= expression(lambda ~ ": MCMC vs TPNormal Approximation"),
      lwd = 2, col = "blue", xlab=expression(lambda), ylab = "Density")
-curve(tempf1,0.1,1.1, col = "red", add= T)
+curve(tempf1,0.1,1.1, col = "red", add= T, lwd = 2, n = 1000)
 
 
 plot(density(sim[,2]), main= expression(lambda ~ ": MCMC vs TPNormal Approximation"),
      lwd = 2, col = "blue", xlab=expression(lambda), ylab = "Density")
-curve(tempf2,-3,-1, col = "red", add= T)
+curve(tempf2,-3,-1, col = "red", add= T, lwd = 2, n = 1000)
 
 
 plot(density(sim[,3]), main= expression(lambda ~ ": MCMC vs TPNormal Approximation"),
      lwd = 2, col = "blue", xlab=expression(lambda), ylab = "Density")
-curve(tempf3,0,2.5, col = "red", add= T)
+curve(tempf3,0,2.5, col = "red", add= T, lwd = 2, n = 1000)
 
 
 plot(density(sim[,4]), main= expression(lambda ~ ": MCMC vs TPNormal Approximation"),
      lwd = 2, col = "blue", xlab=expression(lambda), ylab = "Density")
-curve(tempf4,-0.5,2.5, col = "red", add= T)
+curve(tempf4,-0.5,2.5, col = "red", add= T, lwd = 2, n = 1000)
 
 
