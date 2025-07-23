@@ -49,20 +49,10 @@ survtimes <- df$time
 #par3_grid <- seq(from = MAP[3] - 3*sigmas_from_norm_approx[3], to = MAP[3] + 3*sigmas_from_norm_approx[3], length.out = 10)
 #par4_grid <- seq(from = MAP[4] - 3*sigmas_from_norm_approx[4], to = MAP[4] + 3*sigmas_from_norm_approx[4], length.out = 10)
 
-par1_grid <- seq(from = 0.2, to = 1,  length.out = 10)
-par2_grid <- seq(from = -3, to = -1,  length.out = 10)
-par3_grid <- seq(from = 1.0, to = 2.5,  length.out = 10)
-par4_grid <- seq(from = 1, to = 2,  length.out = 10)
-
-
-#par1_grid <- seq(from = MAP[1] - 3*Sigma[1,1], to = MAP[1] + 3*Sigma[1,1],  length.out = 100)
-#par2_grid <- seq(from = MAP[2] - 3*Sigma[2,2], to = MAP[2] + 3*Sigma[2,2],  length.out = 100)
-#par3_grid <- seq(from = MAP[3] - 3*Sigma[3,3], to = MAP[3] + 3*Sigma[3,3],  length.out = 100)
-#par4_grid <- seq(from = MAP[4] - 3*Sigma[4,4], to = MAP[4] + 3*Sigma[4,4],  length.out = 100)
-
-
-
-
+par1_grid <- seq(from = 0, to = 3,  length.out = 10)
+par2_grid <- seq(from = -3, to = 3,  length.out = 10)
+par3_grid <- seq(from = 0, to = 11,  length.out = 10)
+par4_grid <- seq(from = 0, to = 11,  length.out = 10)
 
 param_combinations <- expand.grid(par1 = par1_grid,
                                   par2 = par2_grid,
@@ -71,15 +61,10 @@ param_combinations <- expand.grid(par1 = par1_grid,
 eta_grid  <- as.matrix(param_combinations)
 
 
-#N <- nrow(eta_grid)
-#log_p <- numeric(N)
-#for (i in 1:N) {
-#  log_p[i] <- -log_postHRL(eta_grid[i,])
-#}
-
-log_p <- numeric(nrow(sim))
-for (i in 1:nrow(sim)) {
-  log_p[i] <- -log_postHRL(sim[i,])
+N <- nrow(eta_grid)
+log_p <- numeric(N)
+for (i in 1:N) {
+  log_p[i] <- -log_postHRL(eta_grid[i,])
 }
 
 
@@ -91,28 +76,18 @@ sim = chainHR[ind,]
 
 LSE <- function(phi, eta, log_p){
   
-  mu <- phi[1:4]
-  sigma1 <- exp(phi[5:8])
-  sigma2 <- exp(phi[9:12])
-  
-  if (!all(is.finite(sigma1)) || !all(is.finite(sigma2))) {
-    return(.Machine$double.xmax)
-  }
   
   # Calculate log_q using the pre-calculated grid.
+ 
+  mu <- phi_init_lse[1:4]
+  sigma1 <- exp(phi_init_lse[5:8])
+  sigma2 <- exp(phi_init_lse[9:12])
   
-  ##############################
-  log_q_matrix <- matrix(NA, nrow = nrow(eta), ncol = 4)
+  log_q_matrix <- matrix(NA, nrow = nrow(eta_grid), ncol = 4)
   
-  # for(j in 1:nrow(sim)){
-  # for (i in 1:4) {
-  #   log_q_matrix[j,i] <- dtp3(sim[j,i], mu[i], sigma1[i], sigma2[i], FUN = dnorm, log = TRUE )
-  # }
-  # }
-  
-  for (j in 1:nrow(eta)) {
+  for (j in 1:nrow(eta_grid)) {
     for (i in 1:4) {
-      log_q_matrix[j,i] <- dtp3(eta[j,i], mu[i], sigma1[i], sigma2[i], FUN = dnorm, log = TRUE )
+      log_q_matrix[j,i] <- dtp3(eta_grid[j,i], mu[i], sigma1[i], sigma2[i], FUN = dnorm, log = TRUE )
     }
   }
   
@@ -124,9 +99,7 @@ LSE <- function(phi, eta, log_p){
   log_q <- rowSums(log_q_matrix)
   
   # Calculate MSE against the pre-calculated log_p vector.
-#  mse <- mean( (log_p - log_q)^2)
-  
-  mse <- mean( (log_p - lnormc - log_q)^2) 
+  mse <- mean( (log_p - log_q)^2)
   
   return(mse)
 }
@@ -143,14 +116,14 @@ LSE <- function(phi, eta, log_p){
 # phi_init_lse <- c(MAP, log(sigmas_napp), log(sigmas_napp))
 # phi_init_lse <- c(MAP, log(c(sigmas_napp[1], sigmas_napp[2], 1.5 * sigmas_napp[3], 1.1 * sigmas_napp[4])), log(c(1.5 * sigmas_napp[1], 3* sigmas_napp[2], sigmas_napp[3], sigmas_napp[4])))
 
-phi_init_lse <- OPT$par
+phi_init_lse = OPT$par
 
 set.seed(1234)
 
 output_lse <- nlminb(phi_init_lse, LSE, 
-                     eta = eta_grid, 
-                     log_p = log_p,
-                     control = list(iter.max = 1e4, trace = 1))
+                 eta = eta_grid, 
+                 log_p = log_p,
+                 control = list(iter.max = 1e4, trace = 1))
 
 phi_lse <- output_lse$par
 
@@ -163,9 +136,9 @@ sigma1_lse = exp(phi_lse[5:8])
 sigma2_lse = exp(phi_lse[9:12])
 
 eta_samples_lse = cbind(rtp3(10000, mu_lse[1], sigma1_lse[1], sigma2_lse[1], FUN = rnorm),
-                        rtp3(10000, mu_lse[2], sigma1_lse[2], sigma2_lse[2], FUN = rnorm),
-                        rtp3(10000, mu_lse[3], sigma1_lse[3], sigma2_lse[3], FUN = rnorm),
-                        rtp3(10000, mu_lse[4], sigma1_lse[4], sigma2_lse[4], FUN = rnorm))
+                    rtp3(10000, mu_lse[2], sigma1_lse[2], sigma2_lse[2], FUN = rnorm),
+                    rtp3(10000, mu_lse[3], sigma1_lse[3], sigma2_lse[3], FUN = rnorm),
+                    rtp3(10000, mu_lse[4], sigma1_lse[4], sigma2_lse[4], FUN = rnorm))
 
 theta_samples_lse <- as.data.frame(exp(eta_samples_lse))
 colnames(theta_samples_lse) <- c("lambda", "kappa", "alpha", "beta")
@@ -212,4 +185,6 @@ lines(density(betapHR), lwd = 2, col = "red")
 lines(density(theta_samples$beta), lwd = 2, col = "purple")
 lines(density(theta_samples_lse$beta), lwd = 2, col = "darkgreen")
 legend("topright", c("Normal","MCMC", "VB", "LSE"), col=c("blue","red", "purple", "darkgreen"), lwd=2)
+
+
 
