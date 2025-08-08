@@ -167,7 +167,7 @@ output = nlminb(phi_init_fine, mc_elbo, N=5000, control = list(iter.max = 1e4, t
 phi = output$par
 
 print(phi)
-
+x
 
 #################################################################################
 # Results
