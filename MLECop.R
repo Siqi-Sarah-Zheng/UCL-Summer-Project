@@ -3,7 +3,7 @@ library(copula)
 library(twopiece)
 library(mvtnorm)
 
-sim <- rmvnorm(n = 1000, mean = rep(1,4), sigma = diag(4))
+sim <- rmvnorm(n = 1000, mean = rep(2,4), sigma = diag(4))
 
 
 # log likelihood function (reparameterised)
@@ -41,5 +41,5 @@ OPT
 
 MLE  <- c(OPT$par[1:4],exp(OPT$par[5:12]), 2*plogis(OPT$par[13:18])-1)
 
-cbind(MLE, c(rep(0,4),rep(1,8),rep(0,6)))
+cbind(MLE, c(rep(2,4),rep(1,8),rep(0,6)))
 
