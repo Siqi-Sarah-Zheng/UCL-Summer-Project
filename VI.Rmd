@@ -1,0 +1,706 @@
+---
+title: "CMVI"
+output: html_document
+date: "2025-08-31"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+This is work is based Christen and Rubio (2024) ODE Survival Model. We provide computationally efficient methods alternative to MCMC sampling.
+
+#Normal Approximation#
+First, we construct a normal approximation using Laplace approximation.
+```{r}
+library(deSolve)
+load("Ex2.RData")
+
+library(numDeriv)
+
+MAP = nlminb(inits, log_postHR, control = list(iter.max = 1e4))$par
+
+
+hess = hessian(func = log_postHR, x = MAP)
+
+
+Sigma = solve(hess)
+
+sigmas_napp = sqrt(diag(Sigma))
+
+library(mvtnorm)
+
+set.seed(123)
+post_napp = rmvnorm(n = 10000, mean = MAP, sigma = Sigma)
+
+
+# Graphs for comparisons between mcmc and normal approximation
+par(mfrow=c(2,2), mar=c(4,4,2,1))
+
+# lambda
+plot(density(exp(post_napp[,1])), main= expression(lambda ~ ": MCMC vs Normal Approximation"),
+     lwd = 2, col = "blue", xlab=expression(lambda), ylab = "Density")
+lines(density(lambdapHR), lwd = 2, col = "red")
+legend("topright", c("Normal","MCMC"), col=c("blue","red"), lwd=2)
+
+# kappa
+plot(density(exp(post_napp[,2])), main = expression(kappa ~ ": MCMC vs Normal Approximation"),
+     lwd = 2, col = "blue", xlab = expression(kappa), ylab = "Density", ylim=c(0,26))
+lines(density(kappapHR), lwd = 2, col = "red")
+legend("topright", c("Normal","MCMC"), col=c("blue","red"), lwd=2)     
+
+# alpha
+plot(density(exp(post_napp[,3])), main = expression(alpha ~ ": MCMC vs Normal Approximation"),
+     lwd = 2, col = "blue", xlab = expression(alpha), ylab = "Density", xlim = c(0,11))
+lines(density(alphapHR), lwd = 2, col = "red")
+legend("topright", c("Normal","MCMC"), col=c("blue","red"), lwd=2)  
+
+# beta
+plot(density(exp(post_napp[,4])), main = expression(beta ~ ": MCMC vs Normal Approximation"),
+     lwd = 2, col = "blue", xlab = expression(beta), ylab = "Density", xlim = c(1,10))
+lines(density(betapHR), lwd = 2, col = "red")
+legend("topright", c("Normal","MCMC"), col=c("blue","red"), lwd=2)  
+```
+From the Normal Approximation result we see that it captures most of the MCMC result, especially around the mode. However, as the normal approximation results in a symmetric density, it fails to capture tail behaviours and skewness. Therefore, we want to further consider flexible approximations such as variational inference and least square density fitting.
+
+
+#Least Square Density Fitting#
+We also construct a Least Square Density Fitting. We define a grid for each parameter space and minimise the mean square error.
+
+```{r}
+# install.packages(c("deSolve", "survival", "devtools"))
+library(deSolve)
+library(survival)
+library(devtools)
+# install_github("FJRubio67/twopiece")
+library(twopiece)
+
+source("routines.R")
+
+#################################################################################
+# Data preparation
+#################################################################################
+
+head(rotterdam)
+
+dim(rotterdam)
+
+
+# New data frame: logical status, time in years, survival times sorted
+df <- data.frame(time = rotterdam$dtime, status = rotterdam$death)
+df$status <- as.logical(rotterdam$death)
+df$time <- df$time/365.24
+
+df <- df[order(df$time),]
+
+# Required quantities
+status <- as.logical(df$status)
+t_obs <- df$time[status]
+survtimes <- df$time
+
+
+#################################################################################
+# Define the parameter grids and the log posterior 
+#################################################################################
+
+par1_grid <- seq(from = 0, to = 3,  length.out = 10)
+par2_grid <- seq(from = -3, to = 3,  length.out = 10)
+par3_grid <- seq(from = 0, to = 11,  length.out = 10)
+par4_grid <- seq(from = 0, to = 11,  length.out = 10)
+
+param_combinations <- expand.grid(par1 = par1_grid,
+                                  par2 = par2_grid,
+                                  par3 = par3_grid,
+                                  par4 = par4_grid)
+eta_grid  <- as.matrix(param_combinations)
+
+
+N <- nrow(eta_grid)
+log_p <- numeric(N)
+for (i in 1:N) {
+  log_p[i] <- -log_postHRL(eta_grid[i,])
+}
+
+
+#################################################################################
+# LSE function
+#################################################################################
+
+sim = chainHR[ind,]
+
+LSE <- function(phi, eta, log_p){
+  
+  
+  # Calculate log_q using the pre-calculated grid.
+ 
+  mu <- phi_init_lse[1:4]
+  sigma1 <- exp(phi_init_lse[5:8])
+  sigma2 <- exp(phi_init_lse[9:12])
+  
+  log_q_matrix <- matrix(NA, nrow = nrow(eta_grid), ncol = 4)
+  
+  for (j in 1:nrow(eta_grid)) {
+    for (i in 1:4) {
+      log_q_matrix[j,i] <- dtp3(eta_grid[j,i], mu[i], sigma1[i], sigma2[i], FUN = dnorm, log = TRUE )
+    }
+  }
+  
+  
+  if (any(!is.finite(log_q_matrix))) {
+    return(.Machine$double.xmax)
+  }
+  
+  log_q <- rowSums(log_q_matrix)
+  
+  # Calculate MSE against the pre-calculated log_p vector.
+  mse <- mean( (log_p - log_q)^2)
+  
+  return(mse)
+}
+
+
+#################################################################################
+# Optimisation
+#################################################################################
+sim <- chainHR[ind,]
+
+nloglik <- function(par){
+  
+  mu <- par[1:4]
+  sigma1 <- exp(par[5:8])
+  sigma2 <- exp(par[9:12])
+  
+  # Calculate log_q using the pre-calculated grid.
+  
+  log_q_matrix <- matrix(NA, nrow = nrow(sim), ncol = ncol(sim))
+  
+  log_q_matrix <- matrix(
+    mapply(function(x, i) dtp3(x, mu[i], sigma1[i], sigma2[i], FUN = dnorm, log = TRUE),
+           x = as.vector(sim),
+           i = rep(1:4, each = nrow(sim))),
+    nrow = nrow(sim), ncol = 4, byrow = FALSE
+  )
+
+  
+  out <- -sum(log_q_matrix)
+  
+return(out)  
+  
+}
+
+
+OPT <- nlminb(start = c(rep(0,4),rep(1,8)), objective = nloglik, control = list(iter.max = 10000))
+
+
+
+phi_init_lse = OPT$par
+
+set.seed(1234)
+
+output_lse <- nlminb(phi_init_lse, LSE, 
+                 eta = eta_grid, 
+                 log_p = log_p,
+                 control = list(iter.max = 1e4, trace = 1))
+
+phi_lse <- output_lse$par
+
+#################################################################################
+# Result
+#################################################################################
+
+mu_lse = phi_lse[1:4]
+sigma1_lse = exp(phi_lse[5:8])
+sigma2_lse = exp(phi_lse[9:12])
+
+eta_samples_lse = cbind(rtp3(10000, mu_lse[1], sigma1_lse[1], sigma2_lse[1], FUN = rnorm),
+                    rtp3(10000, mu_lse[2], sigma1_lse[2], sigma2_lse[2], FUN = rnorm),
+                    rtp3(10000, mu_lse[3], sigma1_lse[3], sigma2_lse[3], FUN = rnorm),
+                    rtp3(10000, mu_lse[4], sigma1_lse[4], sigma2_lse[4], FUN = rnorm))
+
+theta_samples_lse <- as.data.frame(exp(eta_samples_lse))
+colnames(theta_samples_lse) <- c("lambda", "kappa", "alpha", "beta")
+
+summary(theta_samples_lse)
+
+
+
+###################################################################################
+# Graphs Comparison
+###################################################################################
+par(mfrow=c(2,2), mar=c(4,4,2,1))
+
+# lambda
+plot(density(lambdapHR), main = expression(lambda ~ ": MCMC vs LSE"),
+     lwd = 2, col = "red", xlab = expression(lambda), ylab = "Density", xlim = c(1,3), ylim = c(0,2.5))
+lines(density(theta_samples_lse$lambda), lwd = 2, col = "darkgreen")
+legend("topright", c("MCMC", "LSE"), col = c("red", "darkgreen"), lwd = 2, bty = "n")
+
+# kappa
+plot(density(kappapHR), main = expression(kappa ~ ": MCMC vs LSE"),
+     lwd = 2, col = "red", xlab = expression(kappa), ylab = "Density", ylim = c(0,35))
+lines(density(theta_samples_lse$kappa), lwd = 2, col = "darkgreen")
+legend("topright", c("MCMC", "LSE"), col = c("red", "darkgreen"), lwd = 2, bty = "n")
+
+# alpha
+plot(density(alphapHR), main = expression(alpha ~ ": MCMC vs LSE"),
+     lwd = 2, col = "red", xlab = expression(alpha), ylab = "Density", xlim = c(0,11))
+lines(density(theta_samples_lse$alpha), lwd = 2, col = "darkgreen")
+legend("topright", c("MCMC", "LSE"), col = c("red", "darkgreen"), lwd = 2, bty = "n")
+
+# beta
+plot(density(betapHR), main = expression(beta ~ ": MCMC vs LSE"),
+     lwd = 2, col = "red", xlab = expression(beta), ylab = "Density", xlim = c(1,10), ylim = c(0,0.8))
+lines(density(theta_samples_lse$beta), lwd = 2, col = "darkgreen")
+legend("topright", c("MCMC", "LSE"), col = c("red", "darkgreen"), lwd = 2, bty = "n")
+```
+
+#Variational Inference using independent two-piece normals#
+We first consider using a variational inference using independent two-piece normals as the variational distribution. We do a monte-carlo ELBO.
+
+```{r}
+library(deSolve)
+library(survival)
+library(devtools)
+# install_github("FJRubio67/twopiece")
+library(twopiece)
+library(optimx)
+
+source("routines.R")
+
+
+#################################################################################
+# Monte Carlo function of the ELBO
+#################################################################################
+
+mc_elbo <- function(phi, N = 5000){
+  
+  mu = phi[1:4]
+  sigma1 = exp(phi[5:8])
+  sigma2 = exp(phi[9:12])
+  
+  # Sample from the variational distribution
+  
+  # eps = matrix(rnorm(N*4), ncol = 4)
+  
+  eta = cbind(rtp3(N, mu[1], sigma1[1], sigma2[1], FUN = rnorm),
+              rtp3(N, mu[2], sigma1[2], sigma2[2], FUN = rnorm),
+              rtp3(N, mu[3], sigma1[3], sigma2[3], FUN = rnorm),
+              rtp3(N, mu[4], sigma1[4], sigma2[4], FUN = rnorm))
+  
+  # Calculate the ELBO
+  
+  
+  
+  log_p = numeric(N) # create an empty vector to store log p(y, θ)
+  for (i in 1:N) {
+    log_p[i] = -log_postHRL(eta[i,])
+  }
+  
+  
+  
+  # Term 2: E[log q(η)]
+  
+  log_q_matrix = matrix(NA, nrow = N, ncol = 4)
+  
+  for (i in 1:4) {
+    log_q_matrix[,i] = dtp3(eta[,i], mu[i], sigma1[i], sigma2[i], FUN = dnorm, log = TRUE )
+  }
+  
+
+  
+  log_q = rowSums(log_q_matrix)
+  
+  elbo = mean(log_p - log_q)
+  
+  return(-elbo)
+}
+
+
+#################################################################################
+# Optimisation
+#################################################################################
+
+phi_init = OPT$par
+
+set.seed(42)
+
+output = nlminb(phi_init, mc_elbo, control = list(iter.max = 1e4, trace = 1)) 
+
+phi = output$par
+
+print(phi)
+
+
+#################################################################################
+# Results
+#################################################################################
+
+mu = phi[1:4]
+sigma1 = exp(phi[5:8])
+sigma2 = exp(phi[9:12])
+
+eta_samples = cbind(rtp3(10000, mu[1], sigma1[1], sigma2[1], FUN = rnorm),
+                    rtp3(10000, mu[2], sigma1[2], sigma2[2], FUN = rnorm),
+                    rtp3(10000, mu[3], sigma1[3], sigma2[3], FUN = rnorm),
+                    rtp3(10000, mu[4], sigma1[4], sigma2[4], FUN = rnorm))
+
+theta_samples <- as.data.frame(exp(eta_samples))
+colnames(theta_samples) <- c("lambda", "kappa", "alpha", "beta")
+
+summary(theta_samples)
+
+
+#################################################################################
+# Plots for Comparisons
+#################################################################################
+par(mfrow=c(2,2), mar=c(4,4,2,1))
+
+# Plot for lambda
+plot(density(exp(post_napp[,1])), main= expression(lambda ~ ": Comparisons between Normal, MCMC, VB"),
+     lwd = 2, col = "blue", xlab=expression(lambda), ylab = "Density")
+lines(density(lambdapHR), lwd = 2, col = "red")
+lines(density(theta_samples$lambda), lwd = 2, col = "purple")
+legend("topright", c("Normal","MCMC", "Variational Bayes"), col=c("blue","red", "purple"), lwd=2)
+
+
+# kappa
+plot(density(exp(post_napp[,2])), main = expression(kappa ~ ": Comparisons between Normal, MCMC, VB"),
+     lwd = 2, col = "blue", xlab = expression(kappa), ylab = "Density", ylim = c(0,35))
+lines(density(kappapHR), lwd = 2, col = "red")
+lines(density(theta_samples$kappa), lwd = 2, col = "purple")
+legend("topright", c("Normal","MCMC", "Variational Bayes"), col=c("blue","red", "purple"), lwd=2)
+
+
+# alpha
+plot(density(exp(post_napp[,3])), main = expression(alpha ~ ": Comparisons between Normal, MCMC, VB"),
+     lwd = 2, col = "blue", xlab = expression(alpha), ylab = "Density", xlim = c(0,11))
+lines(density(alphapHR), lwd = 2, col = "red")
+lines(density(theta_samples$alpha), lwd = 2, col = "purple")
+legend("topright", c("Normal","MCMC", "VB"), col=c("blue","red", "purple"), lwd=2) 
+
+
+# beta
+plot(density(exp(post_napp[,4])), main = expression(beta ~ ": Comparisons between Normal, MCMC, VB"),
+     lwd = 2, col = "blue", xlab = expression(beta), ylab = "Density", xlim = c(1,10))
+lines(density(betapHR), lwd = 2, col = "red")
+lines(density(theta_samples$beta), lwd = 2, col = "purple")
+legend("topright", c("Normal","MCMC", "VB"), col=c("blue","red", "purple"), lwd=2)
+
+
+```
+
+
+#Copula-Marginal Variational Inference using Gaussian Copula and Two-piece normal marginals#
+
+In this section, we provide a copula-marginal variational inference. We also adopted importance-weighted ELBO and self-normalised importance sampling.
+
+```{r}
+qtp3 <- function (p, mu, par1, par2, FUN) {
+  eps <- 1e-10 
+  split_point <- par1 / (par1 + par2)
+  is_left <- p < split_point
+  is_right <- !is_left
+  
+  arg_left <- 0.5 * p[is_left] * (par1 + par2) / par1
+  arg_right <- 0.5 * ((par1 + par2) * (1 + p[is_right]) - 2 * par1) / par2
+  
+  Q <- numeric(length(p))
+  
+  if(any(is_left)) {
+    Q[is_left] <- mu + par1 * FUN(pmin(pmax(arg_left, eps), 1 - eps))
+  }
+  if(any(is_right)) {
+    Q[is_right] <- mu + par2 * FUN(pmin(pmax(arg_right, eps), 1 - eps))
+  }
+  
+  return(Q)
+}
+
+#################################################################################
+# Monte Carlo function of the ELBO
+#################################################################################
+
+library(MASS)     
+library(mvtnorm) 
+
+# phi: [1:4]=mu, [5:8]=log(sigma1), [9:12]=log(sigma2), [13:18]=psi
+mc_elbo <- function(phi, N = 10000) {
+  
+  mu   <- phi[1:4]
+  s1   <- exp(phi[5:8])
+  s2   <- exp(phi[9:12])
+  psi  <- phi[13:18]
+  rhos <- 2 * plogis(psi) - 1
+  
+  R <- matrix(c(
+    1,        rhos[1], rhos[2], rhos[3],
+    rhos[1],  1,       rhos[4], rhos[5],
+    rhos[2],  rhos[4], 1,       rhos[6],
+    rhos[3],  rhos[5], rhos[6], 1
+  ), nrow = 4, byrow = TRUE)
+  
+
+  if (inherits(try(chol(R), silent = TRUE), "try-error")) {
+    return(.Machine$double.xmax)
+  }
+  
+  Z <- mvrnorm(n = N, mu = rep(0, 4), Sigma = R) 
+  U <- pnorm(Z)                             
+  
+  eta <- cbind(
+    qtp3(U[,1], mu[1], s1[1], s2[1], FUN = qnorm),
+    qtp3(U[,2], mu[2], s1[2], s2[2], FUN = qnorm),
+    qtp3(U[,3], mu[3], s1[3], s2[3], FUN = qnorm),
+    qtp3(U[,4], mu[4], s1[4], s2[4], FUN = qnorm)
+  )
+  
+  ##  Term 1: E_q[log p(y, η)]  
+  log_p <- vapply(seq_len(N), function(i) -log_postHRL(eta[i, ]), numeric(1))
+  
+  ##  Term 2: E_q[log q(η)]
+  log_q_marg <-
+    dtp3(eta[,1], mu[1], s1[1], s2[1], FUN = dnorm, log = TRUE) +
+    dtp3(eta[,2], mu[2], s1[2], s2[2], FUN = dnorm, log = TRUE) +
+    dtp3(eta[,3], mu[3], s1[3], s2[3], FUN = dnorm, log = TRUE) +
+    dtp3(eta[,4], mu[4], s1[4], s2[4], FUN = dnorm, log = TRUE)
+  
+  log_phi_R  <- mvtnorm::dmvnorm(Z, sigma = R, log = TRUE) 
+  log_phi_id <- rowSums(dnorm(Z, log = TRUE))        
+  log_cop    <- log_phi_R - log_phi_id
+  
+  log_q <- log_q_marg + log_cop
+  
+  -mean(log_p - log_q)
+}
+#################################################################################
+# Importance-Weighted Monte Carlo ELBO
+#################################################################################
+logmeanexp <- function(v){ m <- max(v); m + log(mean(exp(v - m))) }
+
+mc_elbo <- function(phi, N = 5000, M = 10){
+  N_use <- (N %/% M) * M
+  mu   <- phi[1:4]
+  s1   <- exp(phi[5:8])
+  s2   <- exp(phi[9:12])
+  psi  <- phi[13:18]
+  rhos <- 2 * plogis(psi) - 1
+  
+  R <- matrix(c(
+    1, rhos[1], rhos[2], rhos[3],
+    rhos[1], 1, rhos[4], rhos[5],
+    rhos[2], rhos[4], 1, rhos[6],
+    rhos[3], rhos[5], rhos[6], 1
+  ), 4, 4, byrow = TRUE)
+  if (inherits(try(chol(R), silent = TRUE), "try-error")) return(.Machine$double.xmax)
+  
+  Z <- MASS::mvrnorm(n = N_use, mu = rep(0,4), Sigma = R)
+  U <- pnorm(Z)
+  
+  eta <- cbind(
+    qtp3(U[,1], mu[1], s1[1], s2[1], FUN = qnorm),
+    qtp3(U[,2], mu[2], s1[2], s2[2], FUN = qnorm),
+    qtp3(U[,3], mu[3], s1[3], s2[3], FUN = qnorm),
+    qtp3(U[,4], mu[4], s1[4], s2[4], FUN = qnorm)
+  )
+  
+  # E_q[log p(y,eta)] 
+  log_p <- vapply(seq_len(N_use), function(i) -log_postHRL(eta[i, ]), numeric(1))
+  
+  # E_q[log q(eta)] = ∑ log dtp3 + log copula
+  log_q_marg <-
+    dtp3(eta[,1], mu[1], s1[1], s2[1], FUN = dnorm, log = TRUE) +
+    dtp3(eta[,2], mu[2], s1[2], s2[2], FUN = dnorm, log = TRUE) +
+    dtp3(eta[,3], mu[3], s1[3], s2[3], FUN = dnorm, log = TRUE) +
+    dtp3(eta[,4], mu[4], s1[4], s2[4], FUN = dnorm, log = TRUE)
+  
+  log_phi_R  <- mvtnorm::dmvnorm(Z, sigma = R, log = TRUE)
+  log_phi_id <- rowSums(dnorm(Z, log = TRUE))
+  log_q <- log_q_marg + (log_phi_R - log_phi_id)
+  
+  log_w <- log_p - log_q
+  L <- matrix(log_w[1:((N_use/M)*M)], ncol = M, byrow = TRUE)
+  iw_elbo <- mean(apply(L, 1, logmeanexp)) - log(M)
+  -iw_elbo
+}
+
+#################################################################################
+# Optimisation
+#################################################################################
+phi_init <- c(OPT$par, rep(0, 6))
+
+set.seed(42)
+out1 <- nlminb(phi_init, mc_elbo, N = 1000, M = 10, control = list(iter.max = 1e4, trace = 1))
+out2 <- nlminb(out1$par, mc_elbo, N = 5000, M = 10, control = list(iter.max = 1e4, trace = 1))
+phi  <- out2$par
+
+#################################################################################
+# Normalised Importance Sampling (NIS)
+#################################################################################
+mu     <- phi[1:4]
+sigma1 <- exp(phi[5:8])
+sigma2 <- exp(phi[9:12])
+psi    <- phi[13:18]
+rhos   <- 2 * plogis(psi) - 1
+
+R <- matrix(c(1, rhos[1], rhos[2], rhos[3],
+              rhos[1], 1, rhos[4], rhos[5],
+              rhos[2], rhos[4], 1, rhos[6],
+              rhos[3], rhos[5], rhos[6], 1), 4, 4, byrow = TRUE)
+
+set.seed(123)
+Zs <- mvrnorm(n = 10000, mu = rep(0, 4), Sigma = R)
+Us <- pnorm(Zs)
+etas <- cbind(
+  qtp3(Us[,1], mu[1], sigma1[1], sigma2[1], FUN = qnorm),
+  qtp3(Us[,2], mu[2], sigma1[2], sigma2[2], FUN = qnorm),
+  qtp3(Us[,3], mu[3], sigma1[3], sigma2[3], FUN = qnorm),
+  qtp3(Us[,4], mu[4], sigma1[4], sigma2[4], FUN = qnorm)
+)
+
+thetas <- as.data.frame(exp(etas))
+names(thetas) <- c("lambda","kappa","alpha","beta")
+
+# log q and log p
+log_q_marg <- twopiece::dtp3(etas[,1], mu[1], sigma1[1], sigma2[1], FUN = dnorm, log = TRUE) +
+  twopiece::dtp3(etas[,2], mu[2], sigma1[2], sigma2[2], FUN = dnorm, log = TRUE) +
+  twopiece::dtp3(etas[,3], mu[3], sigma1[3], sigma2[3], FUN = dnorm, log = TRUE) +
+  twopiece::dtp3(etas[,4], mu[4], sigma1[4], sigma2[4], FUN = dnorm, log = TRUE)
+log_q_samp <- log_q_marg + (mvtnorm::dmvnorm(Zs, sigma = R, log = TRUE) - rowSums(dnorm(Zs, log = TRUE)))
+
+log_p_samp <- vapply(seq_len(nrow(etas)), function(i) -log_postHRL(etas[i, ]), numeric(1))
+
+# NIS weights
+lw <- log_p_samp - log_q_samp
+w  <- exp(lw - max(lw))
+w  <- w / sum(w)
+
+#################################################################################
+# Graphs
+#################################################################################
+par(mfrow=c(2,2), mar=c(4,4,2,1))
+
+# λ
+plot(density(lambdapHR), main=expression(lambda), lwd=2, col="red",
+     xlab=expression(lambda), ylab="Density", ylim = c(0,2), xlim = range(c(lambdapHR, thetas$lambda, theta_samples_lse$lambda)))
+lines(density(thetas$lambda, weights = w, bw = bw.nrd0(thetas$lambda)), lwd=2, col="purple")
+lines(density(theta_samples_lse$lambda), lwd=2, col="darkgreen")
+legend("topright", c("MCMC","VB (CMVI)","LSE"),
+       col=c("red","purple","darkgreen"), lwd=2, bty="n", cex=0.85)
+
+# κ
+plot(density(kappapHR), main=expression(kappa), lwd=2, col="red",
+     xlab=expression(kappa), ylab="Density", 
+     xlim = range(c(kappapHR, thetas$kappa, theta_samples_lse$kappa)),
+     ylim=c(0,30))
+lines(density(thetas$kappa, weights = w, bw = bw.nrd0(thetas$kappa)), lwd=2, col="purple")
+lines(density(theta_samples_lse$kappa), lwd=2, col="darkgreen")
+legend("topright", c("MCMC","VB (CMVI)","LSE"),
+       col=c("red","purple","darkgreen"), lwd=2, bty="n", cex=0.85)
+
+# α
+plot(density(alphapHR), main=expression(alpha), lwd=2, col="red",
+     xlab=expression(alpha), ylab="Density", 
+     xlim = range(c(alphapHR, thetas$alpha, theta_samples_lse$alpha)),
+     ylim = c(0,0.5))
+lines(density(thetas$alpha, weights = w, bw = bw.nrd0(thetas$alpha)), lwd=2, col="purple")
+lines(density(theta_samples_lse$alpha), lwd=2, col="darkgreen")
+legend("topright", c("MCMC","VB (CMVI)","LSE"),
+       col=c("red","purple","darkgreen"), lwd=2, bty="n", cex=0.85)
+
+# β
+plot(density(betapHR), main=expression(beta), lwd=2, col="red",
+     xlab=expression(beta), ylab="Density", 
+     xlim = range(c(betapHR, thetas$beta, theta_samples_lse$beta)),
+     ylim = c(0,0.8))
+lines(density(thetas$beta, weights = w, bw = bw.nrd0(thetas$beta)), lwd=2, col="purple")
+lines(density(theta_samples_lse$beta), lwd=2, col="darkgreen")
+legend("topright", c("MCMC","VB (CMVI)","LSE"),
+       col=c("red","purple","darkgreen"), lwd=2, bty="n", cex=0.85)
+```
+
+
+We compare the 2D joint posterior distributions obtained from MCMC (red) and VB (CMVI, skyblue)
+
+```{r, echo=FALSE}
+library(ks)
+
+COL_MCMC <- "#E64B35FF"
+COL_VB   <- "#1F77B4"
+
+scale_w <- function(w) {
+  if (is.null(w)) return(NULL)
+  w[!is.finite(w) | w < 0] <- 0
+  s <- sum(w)
+  if (s <= 0) return(NULL)
+  w * length(w) / s
+}
+
+clean_xyw <- function(x, y, w = NULL) {
+  idx <- is.finite(x) & is.finite(y)
+  if (!is.null(w)) idx <- idx & is.finite(w) & (w >= 0)
+  list(x = x[idx], y = y[idx], w = if (is.null(w)) NULL else w[idx])
+}
+
+band_select <- function(X, w = NULL) {
+  if (is.null(w)) {
+    tryCatch(ks::Hpi(X, binned = TRUE),
+             error = function(e) ks::Hscv(X))
+  } else {
+    tryCatch(ks::Hpi(X, w = w, binned = TRUE),
+             error = function(e1) tryCatch(ks::Hpi(X, binned = TRUE),
+                                           error = function(e2) ks::Hscv(X)))
+  }
+}
+
+contour_pair <- function(xname, yname,
+                         levels_perc = c(50,80,95),
+                         gridsize = c(201,201),
+                         main_expr = NULL) {
+  stopifnot(all(c(xname, yname) %in% names(thetas)))
+  x_m <- get(paste0(xname, "pHR")); y_m <- get(paste0(yname, "pHR"))
+  x_v <- thetas[[xname]];           y_v <- thetas[[yname]]
+  w_v <- scale_w(w)
+  cm <- clean_xyw(x_m, y_m, NULL)
+  cv <- clean_xyw(x_v, y_v, w_v)
+  xr <- range(c(cm$x, cv$x), finite = TRUE); dx <- diff(xr); xr <- xr + c(-.05,.05)*dx
+  yr <- range(c(cm$y, cv$y), finite = TRUE); dy <- diff(yr); yr <- yr + c(-.05,.05)*dy
+  if (is.null(main_expr)) main_expr <- bquote(.(as.symbol(xname)) ~ "vs" ~ .(as.symbol(yname)))
+  plot(NA, NA, xlim = xr, ylim = yr, xlab = xname, ylab = yname, main = main_expr,
+       xaxs = "i", yaxs = "i")
+  rect(par("usr")[1], par("usr")[3], par("usr")[2], par("usr")[4],
+       col = "#F7F7F7", border = NA)
+  grid(col = "#E6E6E6")
+  Hm <- band_select(cbind(cm$x, cm$y))
+  fm <- ks::kde(cbind(cm$x, cm$y), H = Hm, gridsize = gridsize,
+                xmin = c(xr[1], yr[1]), xmax = c(xr[2], yr[2]))
+  lev_m <- ks::contourLevels(fm, cont = levels_perc)
+  contour(fm$eval.points[[1]], fm$eval.points[[2]], fm$estimate,
+          levels = lev_m, add = TRUE, drawlabels = FALSE,
+          col = COL_MCMC, lwd = 2)
+  Hv <- band_select(cbind(cv$x, cv$y), w = cv$w)
+  fv <- ks::kde(cbind(cv$x, cv$y), H = Hv, w = cv$w, gridsize = gridsize,
+                xmin = c(xr[1], yr[1]), xmax = c(xr[2], yr[2]))
+  lev_v <- ks::contourLevels(fv, cont = levels_perc)
+  contour(fv$eval.points[[1]], fv$eval.points[[2]], fv$estimate,
+          levels = lev_v, add = TRUE, drawlabels = FALSE,
+          col = COL_VB, lwd = 2)
+  legend("topright", c("MCMC", "VB (CMVI)"),
+         col = c(COL_MCMC, COL_VB), lwd = 1.6, bty = "n", cex = .75,
+         seg.len = 1, x.intersp = 0.6, y.intersp = 0.7, inset = 0.01,
+         bg = adjustcolor("white", alpha.f = 0.6))
+}
+
+op <- par(mfrow = c(2,3), mar = c(4,4,2.2,1), oma = c(0,0,1,0))
+contour_pair("lambda","kappa", main_expr = expression(lambda~vs~kappa))
+contour_pair("lambda","alpha", main_expr = expression(lambda~vs~alpha))
+contour_pair("lambda","beta",  main_expr = expression(lambda~vs~beta))
+contour_pair("kappa","alpha",  main_expr = expression(kappa~vs~alpha))
+contour_pair("kappa","beta",   main_expr = expression(kappa~vs~beta))
+contour_pair("alpha","beta",   main_expr = expression(alpha~vs~beta))
+par(op)
+
+```
+
+
+
+
